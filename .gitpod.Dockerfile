@@ -3,7 +3,7 @@ FROM gitpod/workspace-full
 USER gitpod
 
 RUN export CHOOSENIM_NO_ANALYTICS=1
-RUN curl https://nim-lang.org/choosenim/init.sh -sSf | sh
+RUN curl https://nim-lang.org/choosenim/init.sh -ysSf | sh
 RUN export PATH=/home/gitpod/.nimble/bin:$PATH
 # Install custom tools, runtime, etc. using apt-get
 # For example, the command below would install "bastet" - a command line tetris clone:
