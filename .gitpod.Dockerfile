@@ -2,9 +2,9 @@ FROM gitpod/workspace-full
                     
 USER gitpod
 
-RUN export CHOOSENIM_NO_ANALYTICS=1
+ENV CHOOSENIM_NO_ANALYTICS 1
 RUN curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
-RUN export PATH=/home/gitpod/.nimble/bin:$PATH
+ENV PATH /home/gitpod/.nimble/bin:$PATH
 
 
 # Install custom tools, runtime, etc. using apt-get
