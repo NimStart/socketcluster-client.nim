@@ -1,16 +1,10 @@
-import strutils, streams, random, base64, strformat, net,
-  strtabs, httpclient
-from nativesockets import htons, htonl
+import strutils, streams, random, base64, uri, strformat, nativesockets, oids,
+  strtabs, std/sha1, net, httpcore
 
-when not declaredInScope(newsUseChronos):
-  # Currently chronos is second class citizen. To use this library in chronos-based
-  # projects, include this file as follows:
-  # const newsUseChronos = true
-  # include news
-  const newsUseChronos = false
+const newsUseChronos = true
 
 when newsUseChronos:
-  import chronos, chronos/streams/[asyncstream, tlsstream]
+  import chronos, chronos/streams/tlsstream
   type Transport = object
     reader: AsyncStreamReader
     writer: AsyncStreamWriter
@@ -22,7 +16,7 @@ when newsUseChronos:
   proc recv(s: Transport, len: int): Future[string] {.async.} =
     var res = newString(len)
     if len != 0:
-      # echo "receiving: ", len
+      echo "receiving: ", len
       await s.reader.readExactly(addr res[0], len)
     return res
 
@@ -33,10 +27,8 @@ when newsUseChronos:
     transp.reader.close()
     transp.writer.close()
 
-else:
-  import asyncdispatch
-  type Transport = Socket
 
+const CRLF = "\c\l"
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 type
@@ -60,7 +52,6 @@ type
 template `[]`(value: uint8, index: int): bool =
   ## get bits from uint8, uint8[2] gets 2nd bit
   (value and (1 shl (7 - index))) != 0
-
 proc nibbleFromChar(c: char): int =
   ## converts hex chars like `0` to 0 and `F` to 15
   case c:
@@ -89,34 +80,107 @@ proc encodeBase16*(str: string): string =
 proc genMaskKey*(): array[4, char] =
   ## Generates a random key of 4 random chars
   [char(rand(255)), char(rand(255)), char(rand(255)), char(rand(255))]
+proc validateServerResponse(resp, secKey: string): string =
+  let respLines = resp.splitLines()
+  block statusCode:
+    const k = "HTTP/1.1 "
+    let i = respLines[0].find(k) + k.len
+    let v = respLines[0][i .. i + 2]
+    if v != "101":
+      return respLines[0][i ..< respLines[0].len]
+
+  var validatedHeaders: array[3, bool]
+  for i in 1 ..< respLines.len:
+    let h = parseHeader(respLines[i])
+    if h.key == "Upgrade":
+      if h.value[0].toLowerAscii != "websocket":
+        return "Upgrade header is invalid"
+      validatedHeaders[0] = true
+
+    elif h.key == "Connection":
+      if h.value[0].toLowerAscii != "upgrade":
+        return "Connection header is invalid"
+      validatedHeaders[1] = true
+
+    elif h.key == "Sec-WebSocket-Accept":
+      let sh = decodeBase16($secureHash(secKey & GUID))
+      if h.value[0].toLowerAscii != base64.encode(sh).toLowerAscii:
+        return "Secret key invalid"
+      validatedHeaders[2] = true
+
+  if not validatedHeaders[0]: return "Missing Upgrade header"
+  if not validatedHeaders[1]: return "Missing Connection header"
+  if not validatedHeaders[2]: return "Missing Sec-WebSocket-Accept header"
 
 proc newWebSocket*(url: string, headers: StringTableRef = nil): Future[WebSocket] {.async.} =
   ## Creates a client
   var ws = WebSocket()
-  let wsClient = newHttpClient()
-  var secStr = newString(16)
-  for i in 0 ..< secStr.len:
-    secStr[i] = char rand(255)
-  let secKey = base64.encode(secStr)
-  wsClient.headers = newHttpHeaders({
-    "Connection": "Upgrade",
-    "Upgrade": "websocket",
-    "Sec-WebSocket-Version": "13",
-    "Sec-WebSocket-Key": secKey,
-    "Sec-WebSocket-Extensions": "client_max_window_bits"
-  })
+  let uri = parseUri(url)
+  var port = Port(80)
+  case uri.scheme
+    of "wss":
+      port = Port(443)
+    of "ws":
+      discard
+    else:
+      raise newException(WebSocketError, &"Scheme {uri.scheme} not supported yet.")
+  if uri.port.len > 0:
+    port = Port(parseInt(uri.port))
 
-  let resp = wsClient.get(url)
-  echo "Resp from wss:" & $resp.headers
+  when newsUseChronos:
+    let tr = await connect(resolveTAddress(uri.hostname, port)[0])
+    ws.transp.reader = newAsyncStreamReader(tr)
+    ws.transp.writer = newAsyncStreamWriter(tr)
+
+    if uri.scheme == "wss":
+      let s = newTlsClientAsyncStream(ws.transp.reader, ws.transp.writer, serverName = uri.hostName)
+      ws.transp.reader = s.reader
+      ws.transp.writer = s.writer
+
+  var urlPath = uri.path
+  if uri.query.len > 0:
+    urlPath.add("?" & uri.query)
+
+  let secKey = "NZ7HGe+iYQmCLkKKVtVkHw=="
   
+  let requestLine = &"GET {urlPath} HTTP/1.1"
+  let predefinedHeaders = [
+    &"Host: {uri.hostname}:{$port}",
+    "Connection: Upgrade",
+    "Upgrade: websocket",
+    "Sec-WebSocket-Version: 13",
+    &"Sec-WebSocket-Key: {secKey}"
+  ]
+
+  var customHeaders = ""
+  if not headers.isNil:
+    for k, v in headers:
+      customHeaders &= &"{k}: {v}{CRLF}"
+  var hello = requestLine & CRLF &
+              customHeaders &
+              predefinedHeaders.join(CRLF) &
+              static(CRLF & CRLF)
+  echo "WS Hello", hello
+  await ws.transp.send(hello)
+
+  var output = ""
+  while not output.endsWith(static(CRLF & CRLF)):
+    output.add await ws.transp.recv(1)
+
+  let error = validateServerResponse(output, secKey)
+  if error.len > 0:
+    raise newException(WebSocketError, "WebSocket connection error: " & error)
+
+  ws.readyState = Open
+  ws.maskFrames = true
   return ws
 
 proc close*(ws: WebSocket) =
   ## close the socket
   ws.readyState = Closed
-  if ws.transp != nil:
+  if not ws.transp.isClosed:
     ws.transp.close()
-    ws.transp = nil
+
 
 type
   Opcode* = enum
@@ -225,6 +289,7 @@ proc encodeFrame*(f: Frame): string =
   ret.setPosition(0)
   return ret.readAll()
 
+
 proc send*(ws: WebSocket, text: string, opcode = Opcode.Text): Future[void] {.async.} =
   try:
     ## write data to WebSocket
@@ -243,13 +308,13 @@ proc send*(ws: WebSocket, text: string, opcode = Opcode.Text): Future[void] {.as
     var i = 0
     while i < frame.len:
       let data = frame[i ..< min(frame.len, i + maxSize)]
-      if ws.transp == nil:
+      if ws.transp.isClosed:
         raise newException(WebSocketClosedError, "Socket closed")
-      ws.transp.send(data)
+      await ws.transp.send(data)
       i += maxSize
       await sleepAsync(1)
   except Exception as e:
-    if ws.transp == nil:
+    if ws.transp.isClosed:
       ws.readyState = Closed
       raise newException(WebSocketClosedError, "Socket closed")
     else:
@@ -266,12 +331,12 @@ proc recvFrame(ws: WebSocket): Future[Frame] {.async.} =
   ## Gets a frame from the WebSocket
   ## See https://tools.ietf.org/html/rfc6455#section-5.2
 
-  if ws.transp == nil:
+  if ws.transp.isClosed:
     ws.readyState = Closed
     return result
 
   # grab the header
-  let header = ws.transp.recv(2)
+  let header = await ws.transp.recv(2)
 
   if header.len != 2:
     ws.readyState = Closed
@@ -301,7 +366,7 @@ proc recvFrame(ws: WebSocket): Future[Frame] {.async.} =
   let headerLen = uint(b1 and 0x7f)
   if headerLen == 0x7e:
     # length must be 7+16 bits
-    var lenstr = ws.transp.recv(2)
+    var lenstr = await ws.transp.recv(2)
     if lenstr.len != 2:
       raise newException(WebSocketClosedError, "Socket closed")
 
@@ -309,7 +374,7 @@ proc recvFrame(ws: WebSocket): Future[Frame] {.async.} =
 
   elif headerLen == 0x7f:
     # length must be 7+64 bits
-    var lenstr = ws.transp.recv(8)
+    var lenstr = await ws.transp.recv(8)
     if lenstr.len != 8:
       raise newException(WebSocketClosedError, "Socket closed")
     finalLen = cast[ptr uint32](lenstr[4].addr)[].htonl
@@ -323,12 +388,12 @@ proc recvFrame(ws: WebSocket): Future[Frame] {.async.} =
   var maskKey = ""
   if result.mask:
     # read mask
-    maskKey = ws.transp.recv(4)
+    maskKey = await ws.transp.recv(4)
     if maskKey.len != 4:
       raise newException(WebSocketClosedError, "Socket closed")
 
   # read the data
-  result.data = ws.transp.recv(int finalLen)
+  result.data = await ws.transp.recv(int finalLen)
   if result.data.len != int finalLen:
     raise newException(WebSocketClosedError, "Socket closed")
 
@@ -336,6 +401,9 @@ proc recvFrame(ws: WebSocket): Future[Frame] {.async.} =
     # apply mask if we need too
     for i in 0 ..< result.data.len:
       result.data[i] = (result.data[i].uint8 xor maskKey[i mod 4].uint8).char
+
+proc sendPing*(ws: WebSocket): Future[void] {.async.} =
+  await ws.send("", Opcode.Ping)
 
 proc sendPong(ws: WebSocket): Future[void] {.async.} =
   await ws.send("", Opcode.Pong)
@@ -367,14 +435,14 @@ proc receivePacket*(ws: WebSocket): Future[Packet] {.async.} =
   except WebSocketError as e:
     raise e
   except Exception as e:
-    if ws.transp == nil:
+    if ws.transp.isClosed:
       ws.readyState = Closed
       result = Packet(kind: Close)
     else:
       raise newException(WebSocketError,
                          &"Could not receive packet because of [{e.name}]: {e.msg}")
 
-proc receiveMessage*(ws: WebSocket): Future[string] {.async.} =
+proc receiveString*(ws: WebSocket): Future[string] {.async.} =
   var receivedString = false
   while not (receivedString or ws.readyState == Closed):
     let packet = await ws.receivePacket()
