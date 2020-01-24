@@ -5,8 +5,8 @@ USER gitpod
 ENV CHOOSENIM_NO_ANALYTICS 1
 RUN curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
 ENV PATH /home/gitpod/.nimble/bin:$PATH
-RUN nimble install chronos
-RUN nimble install inim
+RUN nimble install -y chronos
+RUN nimble install -y inim
 
 
 # Install custom tools, runtime, etc. using apt-get
