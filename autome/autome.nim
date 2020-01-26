@@ -34,50 +34,12 @@ type
   KeyboardCtx* = ref object ## represents keyboard context.
   MouseCtx* = ref object ## represents mouse context.
     perActionWaitTime: int32
-  Window* = distinct Handle ## represents window handle.
   Point* {.pure, final.} = tuple ## represents point on the screen.
     x: int32
     y: int32
-  KeyboardModifier* {.size: sizeof(uint32).} = enum ## represents various
-  ## keyboard modifiers.
-    modAlt = 0, modControl = 1, modShift = 2, modNoRepeat = 14
-  KeyboardModifiers* = set[KeyboardModifier] ## represents set of 
-  ## keyboard modifiers that can be combined.
-  Hotkey* = distinct int ## represents hotkey registered with
-  ## `registerHotkey<#registerHotkey>`_ proc.
-
-proc `==`*(a, b: Window): bool {.borrow.}
-  ## proc to enable comparison of two windows.
-
-proc `==`*(a, b: Hotkey): bool {.borrow.}
-  ## proc to enable comparison of two hotkey handles.
-
-proc `!=`*(a, b: Hotkey): bool =
-  return not (a == b)
-  ## proc to enable comparisson of two hotkey handles.
-
-let
-  mouse* = MouseCtx() ## default mouse context. You can use it like that:
-  ##
-  ## .. code-block:: nim
-  ##   mouse
-  ##     .move(200, 200)
-  ##     .click()
-  keyboard* = KeyboardCtx() ## default keyboard context. You can use it like
-  ## that:
-  ##
-  ## .. code-block:: nim
-  ##   keyboard
-  ##     .send("hello")
+ 
 
 include private/imports
 include private/common
-include private/window
 include private/mouse
 include private/keyboard
-include private/hotkey
-
-when isMainModule:
-  import strutils
-  echo sizeof(NOTIFYICONDATAA) == 508
-  assert sizeof(MOUSEINPUT) == 28

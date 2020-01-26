@@ -6,7 +6,8 @@ RUN sudo apt-get -q update && sudo apt-get install -yq mingw-w64
 ENV CHOOSENIM_NO_ANALYTICS 1
 RUN curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
 ENV PATH /home/gitpod/.nimble/bin:$PATH
-RUN nimble install -y chronos
+RUN cd /workspace/socketcluster-client.nim/bearssl && nimble develop -y
+RUN cd /workspace/socketcluster-client.nim/chronos && nimble develop -y
 
 
 # Install custom tools, runtime, etc. using apt-get

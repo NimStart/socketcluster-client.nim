@@ -1,4 +1,4 @@
-include virtualkeycodes
+from unicode import runeAt, runes
 
 proc initKeykbInput(wVk, wScan: int16, dwFlags: DWORD): KEYBDINPUT {.inline.} =
   KEYBDINPUT(
@@ -32,14 +32,21 @@ proc send*(kb: KeyboardCtx, keys: string): KeyboardCtx
   ## does not send actual characters, but underlying ASCII key codes
   ## associated with characters.
   var input = initKeykbInput(0, 0.int16, 0.DWORD)
-  for key in keys:
-    input.wScan = key.int16
-    # echo input.wScan
-    input.dwFlags = KEYEVENTF_UNICODE
+  if keys == "Enter":
+    input.wScan = 13.int16
+    input.dwFlags = KEYEVENTF_SCANCODE
     discard sendInput(1, input.addr, inputStructSize)
-    input.dwFlags = KEYEVENTF_UNICODE or KEYEVENTF_KEYUP
+    input.dwFlags = KEYEVENTF_SCANCODE or KEYEVENTF_KEYUP
     discard sendInput(1, input.addr, inputStructSize)
-    #wait(100)
+  else:
+    for key in runes(keys):
+      input.wScan = key.int16
+      # echo input.wScan
+      input.dwFlags = KEYEVENTF_UNICODE
+      discard sendInput(1, input.addr, inputStructSize)
+      input.dwFlags = KEYEVENTF_UNICODE or KEYEVENTF_KEYUP
+      discard sendInput(1, input.addr, inputStructSize)
+      #wait(100)
   kb
 
 proc wait*(kb: KeyboardCtx, ms: int32): KeyboardCtx

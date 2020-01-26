@@ -44,7 +44,7 @@ proc execActionWait(mouse: MouseCtx) =
   if mouse.perActionWaitTime > 0:
     sleep(mouse.perActionWaitTime)
 
-proc initMouseInput(x, y: LONG, dwFlags: DWORD,
+proc initMouseInput(x, y: LONG = 0.LONG, dwFlags: DWORD,
     mouseData: DWORD = 0.DWORD): MOUSEINPUT {.inline.} =
   MOUSEINPUT(
     kind: INPUT_MOUSE,
@@ -88,6 +88,15 @@ proc setActionWaitTime*(mouse: MouseCtx, ms: int32,
 proc pos*(m: MouseCtx): Point =
   ## returns current position of the cursor.
   discard getCursorPos(result.addr)
+
+proc scroll*(m: MouseCtx, delta: int32): MouseCtx
+    {.sideEffect, mouseAction, discardable.} =
+  ## emulates mouse press and release event.
+  let x = 0.LONG
+  let y = 0.LONG
+  var input = initMouseInput(x, y, MOUSEEVENTF_WHEEL, delta.DWORD)
+  let res = sendInput(1, input.addr, sizeof(MOUSEINPUT))
+  assert res == 1
 
 proc click*(m: MouseCtx, button: MouseButton, x, y: int32): MouseCtx
     {.sideEffect, mouseAction, discardable.} =

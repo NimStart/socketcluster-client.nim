@@ -55,6 +55,8 @@ proc subscribe*(sc: ScClient, channel: string): ChannelStream  =
   sc.emit(%* SubscribeMessage(event: "#subscribe", cid: cid, data: ChannelMessage(channel: channel, data: %* "")))
   let response = "subscribe proc cid: " & $cid
   channels[channel] = ChannelStream(newFutureStream[MessageData](response))
+  for c in channels.keys:
+    echo c
   return channels[channel]
 
 proc pong(sc: ScClient): void =
@@ -75,8 +77,8 @@ proc handleMessages(sc: ScClient) {.async.} =
         elif message.len() > 0:
           let channelMessage = parseJson(message)
           if channelMessage{"event"}.getStr("event") == "#publish":
-            sc.emit(%* ChannelPublish(event: "#publish", data: ChannelMessage(channel: "nim-test2", data: MessageData(%* {"pong": true}))))
             let channelName = channelMessage{"data"}{"channel"}.getStr("channel")
+            echo channelName
             discard channels[channelName].write(channelMessage{"data"}{"data"})
             echo channelMessage
             
@@ -84,7 +86,7 @@ proc handleMessages(sc: ScClient) {.async.} =
 proc newScClient*(url: string): Future[ScClient] {.async.} =
   let sc = await newWebSocket(url)
   benchmark "handshake took: ":
-    echo await sc.handshake()
+    discard await sc.handshake()
   benchmark "handler took: ":
     asyncCheck handleMessages(sc)
   return sc
