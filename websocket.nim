@@ -1,5 +1,5 @@
-import strutils, streams, random, base64, uri, strformat, nativesockets, oids,
-  strtabs, std/sha1, net, httpcore
+import strutils, streams, random, base64, uri, strformat, nativesockets,
+  strtabs, std/sha1, net, httpcore, times
 
 const newsUseChronos = true
 
@@ -16,7 +16,7 @@ when newsUseChronos:
   proc recv(s: Transport, len: int): Future[string] {.async.} =
     var res = newString(len)
     if len != 0:
-      echo "receiving: ", len
+      ## echo "receiving: ", len
       await s.reader.readExactly(addr res[0], len)
     return res
 
@@ -59,11 +59,6 @@ proc nibbleFromChar(c: char): int =
     of 'a'..'f': (ord(c) - ord('a') + 10)
     of 'A'..'F': (ord(c) - ord('A') + 10)
     else: 255
-proc nibbleToChar(value: int): char =
-  ## converts number like 0 to `0` and 15 to `fg`
-  case value:
-    of 0..9: char(value + ord('0'))
-    else: char(value + ord('a') - 10)
 proc decodeBase16*(str: string): string =
   ## base16 decode a string
   result = newString(str.len div 2)
@@ -71,15 +66,13 @@ proc decodeBase16*(str: string): string =
     result[i] = chr(
       (nibbleFromChar(str[2 * i]) shl 4) or
       nibbleFromChar(str[2 * i + 1]))
-proc encodeBase16*(str: string): string =
-  ## base61 encode a string
-  result = newString(str.len * 2)
-  for i, c in str:
-    result[i * 2] = nibbleToChar(ord(c) shr 4)
-    result[i * 2 + 1] = nibbleToChar(ord(c) and 0x0f)
 proc genMaskKey*(): array[4, char] =
   ## Generates a random key of 4 random chars
   [char(rand(255)), char(rand(255)), char(rand(255)), char(rand(255))]
+proc genSecKey(length: int = 16): string = 
+  for _ in 1..length:
+    add(result, char(rand(int('A') .. int('z'))))
+  return encode(result)
 proc validateServerResponse(resp, secKey: string): string =
   let respLines = resp.splitLines()
   block statusCode:
@@ -141,7 +134,7 @@ proc newWebSocket*(url: string, headers: StringTableRef = nil): Future[WebSocket
   if uri.query.len > 0:
     urlPath.add("?" & uri.query)
 
-  let secKey = "NZ7HGe+iYQmCLkKKVtVkHw=="
+  let secKey = genSecKey(16)
   
   let requestLine = &"GET {urlPath} HTTP/1.1"
   let predefinedHeaders = [
@@ -160,7 +153,6 @@ proc newWebSocket*(url: string, headers: StringTableRef = nil): Future[WebSocket
               customHeaders &
               predefinedHeaders.join(CRLF) &
               static(CRLF & CRLF)
-  echo "WS Hello", hello
   await ws.transp.send(hello)
 
   var output = ""
@@ -288,7 +280,6 @@ proc encodeFrame*(f: Frame): string =
   ret.write(data)
   ret.setPosition(0)
   return ret.readAll()
-
 
 proc send*(ws: WebSocket, text: string, opcode = Opcode.Text): Future[void] {.async.} =
   try:

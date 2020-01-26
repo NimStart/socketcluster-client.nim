@@ -1,4 +1,4 @@
-import websocket, chronos, json, tables
+import websocket, chronos, json, tables, times, strutils, futurestream
 
 type 
   ScClient* = WebSocket
@@ -28,10 +28,19 @@ type
   SubscribeMessage = object of ChannelPublish
     cid: int
   
-  ## ChannelStream = FutureStream[ChannelMessage]
+  ChannelStream* = FutureStream[MessageData]
 
-var cid = 0
+template benchmark(benchmarkName: string, code: untyped) =
+    block:
+      let t0 = epochTime()
+      code
+      let elapsed = epochTime() - t0
+      let elapsedStr = elapsed.formatFloat(format = ffDecimal, precision = 3)
+      echo "CPU Time [", benchmarkName, "] ", elapsedStr, "s"
+
+var cid = 1
 var responses = initTable[int, AsyncResponse]()
+var channels = initTable[string, ChannelStream]()
 
 proc emit*(sc: ScClient, message: JsonNode) =
   echo "Emit: " & $message
@@ -42,45 +51,40 @@ proc emit*(sc: ScClient, message: JsonNode) =
 proc publish*(sc: ScClient, channel: string, data: MessageData): void =
   sc.emit(%* ChannelPublish(event: "#publish", data: ChannelMessage(channel: channel, data: data)))
 
-proc subscribe*(sc: ScClient, channel: string): string  = 
+proc subscribe*(sc: ScClient, channel: string): ChannelStream  = 
   sc.emit(%* SubscribeMessage(event: "#subscribe", cid: cid, data: ChannelMessage(channel: channel, data: %* "")))
   let response = "subscribe proc cid: " & $cid
-  return response
+  channels[channel] = ChannelStream(newFutureStream[MessageData](response))
+  return channels[channel]
 
 proc pong(sc: ScClient): void =
-  echo "pong"
   discard sc.send("#2")
 
 proc handshake(sc: ScClient): Future[string] {.async.} = 
-  sc.emit(%* AsyncMessage(event: "#handshake", cid: cid, data: %* ""))
+  sc.emit(%* AsyncMessage(event: "#handshake", cid: cid, data: %* "{}"))
+  cid.inc
   let str = await sc.receiveString()
   return str
 
+
 proc handleMessages(sc: ScClient) {.async.} =
-  while true:
+  while sc.readyState == Open:
         var message = await sc.receiveString()
-        if message == "#1":
+        if message == "#1" or message == "":
             sc.pong()
-        elif message == "":
-          discard
-        else:
-          let j = parseJson(message)
-          if (j{"event"}.getStr() == "#publish"):
-            sc.emit(%* ChannelPublish(event: "#publish", data: ChannelMessage(channel: "nim-test2", data: MessageData(%* "\"{pong\": true}"))))
-            ## let channelMessage = to(j["data"], ChannelMessage)
-            ## channels.get(channelMessage.channel).write(channelMessage)
-            echo j
+        elif message.len() > 0:
+          let channelMessage = parseJson(message)
+          if channelMessage{"event"}.getStr("event") == "#publish":
+            sc.emit(%* ChannelPublish(event: "#publish", data: ChannelMessage(channel: "nim-test2", data: MessageData(%* {"pong": true}))))
+            let channelName = channelMessage{"data"}{"channel"}.getStr("channel")
+            discard channels[channelName].write(channelMessage{"data"}{"data"})
+            echo channelMessage
+            
 
 proc newScClient*(url: string): Future[ScClient] {.async.} =
-  echo "Start SC"
   let sc = await newWebSocket(url)
-  echo "Got SC - handshake"
-  echo await sc.handshake()
-  asyncCheck handleMessages(sc)
-  discard sc.subscribe("nim-test")
+  benchmark "handshake took: ":
+    echo await sc.handshake()
+  benchmark "handler took: ":
+    asyncCheck handleMessages(sc)
   return sc
- 
-let sc = waitFor newScClient("wss://webrtsi.com/socketcluster/")
-
-runForever()
-  
