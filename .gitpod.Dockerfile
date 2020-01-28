@@ -8,7 +8,7 @@ RUN curl https://nim-lang.org/choosenim/init.sh -sSf | sh -s -- -y
 ENV PATH /home/gitpod/.nimble/bin:$PATH
 RUN nimble install -y https://github.com/NimStart/nim-bearssl.git
 RUN nimble install -y chronos
-
+RUN nimble install -y fidget@#head
 
 # Install custom tools, runtime, etc. using apt-get
 # For example, the command below would install "bastet" - a command line tetris clone:

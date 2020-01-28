@@ -1,4 +1,16 @@
 from unicode import runeAt, runes
+from strutils import parseEnum
+
+type
+  KeyEvent = enum
+    Backspace = (8, "Backspace")
+    Tab = (9, "Tab")
+    Enter = (13, "Enter")
+    Control = (17, "Control")
+    Alt = (18, "Alt")
+    Delete = (46, "Delete")
+    Text = (55, "Text")
+    Meta = (91, "Meta")
 
 proc initKeykbInput(wVk, wScan: int16, dwFlags: DWORD): KEYBDINPUT {.inline.} =
   KEYBDINPUT(
@@ -32,13 +44,8 @@ proc send*(kb: KeyboardCtx, keys: string): KeyboardCtx
   ## does not send actual characters, but underlying ASCII key codes
   ## associated with characters.
   var input = initKeykbInput(0, 0.int16, 0.DWORD)
-  if keys == "Enter":
-    input.wScan = 13.int16
-    input.dwFlags = KEYEVENTF_SCANCODE
-    discard sendInput(1, input.addr, inputStructSize)
-    input.dwFlags = KEYEVENTF_SCANCODE or KEYEVENTF_KEYUP
-    discard sendInput(1, input.addr, inputStructSize)
-  else:
+  let eventType = parseEnum[KeyEvent](keys, KeyEvent.Text)
+  if eventType == KeyEvent.Text:
     for key in runes(keys):
       input.wScan = key.int16
       # echo input.wScan
@@ -46,7 +53,12 @@ proc send*(kb: KeyboardCtx, keys: string): KeyboardCtx
       discard sendInput(1, input.addr, inputStructSize)
       input.dwFlags = KEYEVENTF_UNICODE or KEYEVENTF_KEYUP
       discard sendInput(1, input.addr, inputStructSize)
-      #wait(100)
+  else:
+    input.wVk = eventType.int16
+    input.dwFlags = 0
+    discard sendInput(1, input.addr, inputStructSize)
+    input.dwFlags = KEYEVENTF_KEYUP
+    discard sendInput(1, input.addr, inputStructSize)
   kb
 
 proc wait*(kb: KeyboardCtx, ms: int32): KeyboardCtx
